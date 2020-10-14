@@ -10,6 +10,13 @@
 
 struct _FlutterMidiCommandLinuxPlugin {
   GObject parent_instance;
+
+  FlPluginRegistrar* registrar;
+
+  // Connection to Flutter engine.
+  FlMethodChannel* channel;
+  FIEventChannel* rxChannel;
+  FIEventChannel* setupChannel;
 };
 
 G_DEFINE_TYPE(FlutterMidiCommandLinuxPlugin, flutter_midi_command_linux_plugin, g_object_get_type())
@@ -58,11 +65,21 @@ void flutter_midi_command_linux_plugin_register_with_registrar(FlPluginRegistrar
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   g_autoptr(FlMethodChannel) channel =
       fl_method_channel_new(fl_plugin_registrar_get_messenger(registrar),
-                            "flutter_midi_command_linux",
+                            "plugins.invisiblewrench.com/flutter_midi_command",
                             FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(channel, method_call_cb,
                                             g_object_ref(plugin),
                                             g_object_unref);
+
+                                            g_autoptr(FlMethodChannel) channel =
+      fl_event_channel_new(fl_plugin_registrar_get_messenger(registrar),
+                            "plugins.invisiblewrench.com/flutter_midi_command/rx_channel",
+                            FL_METHOD_CODEC(codec));
+
+                            g_autoptr(FlMethodChannel) channel =
+      fl_event_channel_new(fl_plugin_registrar_get_messenger(registrar),
+                            "plugins.invisiblewrench.com/flutter_midi_command/setup_channel",
+                            FL_METHOD_CODEC(codec));
 
   g_object_unref(plugin);
 }
