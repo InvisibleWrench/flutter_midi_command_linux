@@ -17,7 +17,10 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  ffigen: ^1.0.5
+  ffigen: #^1.0.5
+    git: 
+      url: https://github.com/dart-lang/ffigen.git
+      ref: master
 
 flutter:
   plugin:
@@ -29,9 +32,14 @@ flutter:
 
 ffigen:
   name: 'ALSA'
-  output: 'generated_bindings.dart'
+  output: 'lib/alsa_generated_bindings.dart'
   headers:
     entry-points:
-      - 'example.h'
-  compiler-opts: '-I/usr/lib/llvm-10/include/ -L/usr/lib/llvm-10/lib/ -I/usr/local/opt/llvm/include/ -Wno-nullability-completeness'
-  
+      - '/usr/include/alsa/asoundlib.h'
+  compiler-opts: '-I/usr/lib/llvm-11/include/ -I/usr/local/opt/llvm/include/'
+  structs:
+    rename:
+      '_(.*)': '$1_'
+    member-rename:
+      '.*':
+        '_(.*)': '$1_'
