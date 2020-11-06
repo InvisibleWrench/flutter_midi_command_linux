@@ -2,57 +2,159 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
+import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 import 'dart:typed_data';
 import 'package:meta/meta.dart';
+import 'package:tuple/tuple.dart';
 import 'package:flutter_midi_command_platform_interface/flutter_midi_command_platform_interface.dart';
 import 'alsa_generated_bindings.dart' as a;
 
 final alsa = a.ALSA(DynamicLibrary.open("libasound.so.2"));
 
-class LinuxMidiDevice extends MidiDevice {
-  Pointer<Pointer<a.snd_rawmidi_>> out_port;
-  Pointer<Pointer<a.snd_rawmidi_>> in_port;
-  StreamController<Uint8List> _rxStream;
+int lengthOfMessageType(int type) {
+  int midiType = type & 0xF0;
 
-  LinuxMidiDevice(
-      String id, String name, String type, StreamController<Uint8List> rxStream)
-      : super(id, name, type, false) {
-    _rxStream = rxStream;
+  switch (type) {
+    case 0xF6:
+    case 0xF8:
+    case 0xFA:
+    case 0xFB:
+    case 0xFC:
+    case 0xFF:
+    case 0xFE:
+      return 1;
+    case 0xF1:
+    case 0xF3:
+      return 2;
+    default:
+      break;
   }
 
-  bool connect() {
-    out_port = allocate();
+  switch (midiType) {
+    case 0xC0:
+    case 0xD0:
+      return 2;
+    case 0xF2:
+    case 0x80:
+    case 0x90:
+    case 0xA0:
+    case 0xB0:
+    case 0xE0:
+      return 3;
+    default:
+      break;
+  }
+  return 0;
+}
+
+void _rxIsolate(Tuple2<SendPort, int> args) {
+  final sendPort = args.item1;
+  final Pointer<a.snd_rawmidi_> inPort =
+      Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
+
+  print("start isolate $sendPort, $inPort, ${args.item2}");
+
+  int status = 0;
+  int msgLength = 0;
+  Pointer<Uint8> buffer = allocate(count: 1);
+  List<int> rxBuffer = List<int>();
+
+  while (true) {
+    if (inPort == null) {
+      break;
+    }
+
+    if ((status = alsa.snd_rawmidi_read(inPort, buffer.cast(), 1)) < 0) {
+      print(
+          "Problem reading MIDI input:${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}");
+    } else {
+      // print("byte ${buffer.value}");
+      if (rxBuffer.length == 0) {
+        msgLength = lengthOfMessageType(buffer.value);
+      }
+
+      rxBuffer.add(buffer.value);
+
+      if (rxBuffer.length == msgLength) {
+        // print("send buffer $rxBuffer $msgLength");
+        sendPort.send(Uint8List.fromList(rxBuffer));
+        rxBuffer.clear();
+      }
+    }
+  }
+}
+
+class LinuxMidiDevice extends MidiDevice {
+  Pointer<Pointer<a.snd_rawmidi_>> outPort;
+  Pointer<Pointer<a.snd_rawmidi_>> inPort;
+  StreamController<MidiPacket> _rxStreamCtrl;
+  Isolate _isolate;
+
+  LinuxMidiDevice(String id, String name, String type,
+      StreamController<MidiPacket> rxStreamCtrl)
+      : super(id, name, type, false) {
+    _rxStreamCtrl = rxStreamCtrl;
+  }
+
+  Future<bool> connect() async {
+    outPort = allocate();
+    inPort = allocate();
 
     Pointer<Int8> name = Utf8.toUtf8("hw:$id,0,0").cast<Int8>();
-    print("open ${FlutterMidiCommandLinux.stringFromNative(name)}");
+    print("open out port ${FlutterMidiCommandLinux.stringFromNative(name)}");
     int status = 0;
-    if ((status = alsa.snd_rawmidi_open(
-            in_port, out_port, name, a.SND_RAWMIDI_NONBLOCK)) <
+    if ((status =
+            alsa.snd_rawmidi_open(inPort, outPort, name, a.SND_RAWMIDI_SYNC)) <
         0) {
       print(
           'error: cannot open card number $id ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
       return false;
     }
+
+    connected = true;
+
+    final errorPort = new ReceivePort();
+    final receivePort = ReceivePort();
+    _isolate = await Isolate.spawn(
+            _rxIsolate, Tuple2(receivePort.sendPort, inPort.value.address),
+            onError: errorPort.sendPort)
+        .catchError((err, stackTrace) {
+      print("Could not launch RX isolate. $err\nStackTrace: $stackTrace");
+    });
+
+    errorPort.listen((message) {
+      print('isolate error message $message');
+    });
+
+    receivePort.listen((data) {
+      // print("rx data $data $_rxStreamCtrl ${_rxStreamCtrl.sink}");
+      var packet =
+          MidiPacket(data, DateTime.now().millisecondsSinceEpoch, this);
+      _rxStreamCtrl.add(packet);
+    });
+
     return true;
   }
 
   disconnect() {
+    _isolate.kill(priority: Isolate.immediate);
+
     int status = 0;
-    if ((status = alsa.snd_rawmidi_drain(out_port.value)) < 0) {
+    if ((status = alsa.snd_rawmidi_drain(outPort.value)) < 0) {
       print(
           'error: cannot drain out port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
     }
-    if ((status = alsa.snd_rawmidi_close(out_port.value)) < 0) {
+    if ((status = alsa.snd_rawmidi_close(outPort.value)) < 0) {
       print(
           'error: cannot close out port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
     }
-    if ((status = alsa.snd_rawmidi_drain(in_port.value)) < 0) {
+    if ((status = alsa.snd_rawmidi_drain(inPort.value)) < 0) {
       print(
           'error: cannot drain in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
     }
-    if ((status = alsa.snd_rawmidi_close(in_port.value)) < 0) {
+    if ((status = alsa.snd_rawmidi_close(inPort.value)) < 0) {
       print(
           'error: cannot close in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
     }
@@ -62,29 +164,16 @@ class LinuxMidiDevice extends MidiDevice {
 class FlutterMidiCommandLinux extends MidiCommandPlatform {
   StreamController<MidiPacket> _rxStreamController =
       StreamController<MidiPacket>.broadcast();
-  Stream<MidiPacket> _rxStream =
-      StreamController<MidiPacket>.broadcast().stream;
+  Stream<MidiPacket> _rxStream;
   StreamController<String> _setupStreamController =
       StreamController<String>.broadcast();
   Stream<String> _setupStream;
-
-  // Pointer<Int8> port_name;
-  // Pointer<Pointer<a.snd_rawmidi_>> in_port;
-  // Pointer<Pointer<a.snd_rawmidi_>> out_port;
 
   Map<String, LinuxMidiDevice> _connectedDevices =
       Map<String, LinuxMidiDevice>();
 
   /// A constructor that allows tests to override the window object used by the plugin.
-  FlutterMidiCommandLinux() {
-    // in_port = allocate();
-    // out_port = allocate();
-    // port_name = Utf8.toUtf8("hw:1,0,0");
-
-    // int result =
-    //     rawMIDIOpen(in_port, out_port, port_name, SND_RAWMIDI_NONBLOCK);
-    // print('Result: $result ${statusMessage(result)}');
-  }
+  FlutterMidiCommandLinux();
 
   static String stringFromNative(Pointer<Int8> pointer) {
     return Utf8.fromUtf8(pointer.cast<Utf8>());
@@ -143,9 +232,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
           "card shortname ${stringFromNative(shortname.value)} card ${card.value}");
 
       cards.add(LinuxMidiDevice(card.value.toString(),
-          stringFromNative(shortname.value), "native", _rxStreamController
-          // _connectedDevices.containsKey(card.value.toString())
-          ));
+          stringFromNative(shortname.value), "native", _rxStreamController));
 
       if ((status = alsa.snd_card_next(card)) < 0) {
         print(
@@ -253,23 +340,13 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     print('connect to $device');
 
     var linuxDevice = device as LinuxMidiDevice;
-    // linuxDevice.out_port = allocate();
-    if (linuxDevice.connect()) {
-      _connectedDevices[device.id] = device;
-    } else {
-      print("failed to connect $linuxDevice");
-    }
-
-    // Pointer<Int8> name = Utf8.toUtf8("hw:${device.id},0,0").cast<Int8>();
-    // print("open ${stringFromNative(name)}");
-    // int status = 0;
-    // if ((status = alsa.snd_rawmidi_open(
-    //         nullptr, linuxDevice.out_port, name, a.SND_RAWMIDI_NONBLOCK)) <
-    //     0) {
-    //   print(
-    //       'error: cannot open card number ${device.id} ${stringFromNative(alsa.snd_strerror(status))}');
-    //   return;
-    // }
+    linuxDevice.connect().then((success) {
+      if (success) {
+        _connectedDevices[device.id] = device;
+      } else {
+        print("failed to connect $linuxDevice");
+      }
+    });
   }
 
   /// Disconnects from the device.
@@ -278,15 +355,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     if (_connectedDevices.containsKey(device.id)) {
       var linuxDevice = device as LinuxMidiDevice;
       linuxDevice.disconnect();
-      // int status = 0;
-      // if ((status = alsa.snd_rawmidi_drain(linuxDevice.out_port.value)) < 0) {
-      //   print(
-      //       'error: cannot drain port ${device} ${stringFromNative(alsa.snd_strerror(status))}');
-      // }
-      // if ((status = alsa.snd_rawmidi_close(linuxDevice.out_port.value)) < 0) {
-      //   print(
-      //       'error: cannot close port ${device} ${stringFromNative(alsa.snd_strerror(status))}');
-      // }
       if (remove) _connectedDevices.remove(device.id);
     }
   }
@@ -318,7 +386,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       print("send to $device");
       int status;
       if ((status = alsa.snd_rawmidi_write(
-              device.out_port.value, voidBuffer, data.length)) <
+              device.outPort.value, voidBuffer, data.length)) <
           0) {
         print('failed to write ${stringFromNative(alsa.snd_strerror(status))}');
       }
@@ -333,9 +401,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   @override
   Stream<MidiPacket> get onMidiDataReceived {
     print("get on midi data");
-    // _rxStream ??= _rxChannel.receiveBroadcastStream().map<Uint8List>((d) {
-    //   return Uint8List.fromList(List<int>.from(d));
-    // });
     _rxStream ??= _rxStreamController.stream;
     return _rxStream;
   }
