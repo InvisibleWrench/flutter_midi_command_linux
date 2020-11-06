@@ -74,12 +74,10 @@ packages:
   ffigen:
     dependency: "direct dev"
     description:
-      path: "."
-      ref: master
-      resolved-ref: f9af821d481faa2533c521fed2ac8823aa3da211
-      url: "https://github.com/dart-lang/ffigen.git"
-    source: git
-    version: "1.0.5"
+      name: ffigen
+      url: "https://pub.dartlang.org"
+    source: hosted
+    version: "1.0.6"
   flutter:
     dependency: "direct main"
     description: flutter
@@ -88,10 +86,12 @@ packages:
   flutter_midi_command_platform_interface:
     dependency: "direct main"
     description:
-      name: flutter_midi_command_platform_interface
-      url: "https://pub.dartlang.org"
-    source: hosted
-    version: "0.2.0"
+      path: "."
+      ref: timestamp
+      resolved-ref: "907a5906ece50d41f91189185df880e8a7f2c3cd"
+      url: "https://github.com/InvisibleWrench/flutter_midi_command_platform_interface.git"
+    source: git
+    version: "0.2.1"
   flutter_test:
     dependency: "direct dev"
     description: flutter
@@ -180,7 +180,7 @@ packages:
       name: quiver
       url: "https://pub.dartlang.org"
     source: hosted
-    version: "2.1.4+1"
+    version: "2.1.5"
   sky_engine:
     dependency: transitive
     description: flutter
