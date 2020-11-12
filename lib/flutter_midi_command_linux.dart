@@ -1,111 +1,182 @@
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
 import 'package:ffi/ffi.dart';
+import 'dart:isolate';
 
 import 'package:flutter/services.dart';
 import 'dart:typed_data';
 import 'package:meta/meta.dart';
+import 'package:tuple/tuple.dart';
 import 'package:flutter_midi_command_platform_interface/flutter_midi_command_platform_interface.dart';
+import 'alsa_generated_bindings.dart' as a;
 
-const SND_RAWMIDI_STREAM_OUTPUT = 0;
-const SND_RAWMIDI_STREAM_INPUT = 1;
-const SND_RAWMIDI_APPEND = 0x0001;
-const SND_RAWMIDI_NONBLOCK = 0x0002;
-const SND_RAWMIDI_SYNC = 0x0004;
+final alsa = a.ALSA(DynamicLibrary.open("libasound.so.2"));
 
-typedef snd_strerror = Pointer<Utf8> Function(Int8 errornum);
-typedef StrError = Pointer<Utf8> Function(int errornum);
+int lengthOfMessageType(int type) {
+  int midiType = type & 0xF0;
 
-typedef snd_card_next = Int32 Function(Pointer<Int32> cardNumber);
-typedef CardNext = int Function(Pointer<Int32> cardNumber);
+  switch (type) {
+    case 0xF6:
+    case 0xF8:
+    case 0xFA:
+    case 0xFB:
+    case 0xFC:
+    case 0xFF:
+    case 0xFE:
+      return 1;
+    case 0xF1:
+    case 0xF3:
+      return 2;
+    default:
+      break;
+  }
 
-typedef snd_card_get_name = Int32 Function(
-    Int32 cardNumber, Pointer<Utf8> name);
-typedef CardGetName = int Function(int cardNumber, Pointer<Utf8> name);
+  switch (midiType) {
+    case 0xC0:
+    case 0xD0:
+      return 2;
+    case 0xF2:
+    case 0x80:
+    case 0x90:
+    case 0xA0:
+    case 0xB0:
+    case 0xE0:
+      return 3;
+    default:
+      break;
+  }
+  return 0;
+}
 
-typedef snd_card_get_long_name = Int32 Function(
-    Int32 cardNumber, Pointer<Utf8> name);
-typedef CardGetLongName = int Function(int cardNumber, Pointer<Utf8> name);
+void _rxIsolate(Tuple2<SendPort, int> args) {
+  final sendPort = args.item1;
+  final Pointer<a.snd_rawmidi_> inPort =
+      Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
 
-typedef snd_ctl_open = Int32 Function(
-    Pointer ctlp, Pointer<Utf8> name, Int8 mode);
-typedef CtlOpen = int Function(
-    Pointer<Int32> ctlp, Pointer<Utf8> name, int mode);
+  print("start isolate $sendPort, $inPort, ${args.item2}");
 
-typedef snd_ctl_rawmidi_next_device = Int32 Function(
-    Pointer<Int32> ctl, Pointer<Int32> device);
-typedef CtlRawmidiNextDevice = int Function(
-    Pointer<Int32> ctl, Pointer<Int32> device);
+  int status = 0;
+  int msgLength = 0;
+  Pointer<Uint8> buffer = allocate(count: 1);
+  List<int> rxBuffer = List<int>();
 
-typedef snd_ctl_rawmidi_info = Int32 Function(
-    Pointer<Int32> ctl, Pointer<Int32> info);
-typedef CtlRawmidiInfo = int Function(Pointer<Int32> ctl, Pointer<Int32> info);
+  while (true) {
+    if (inPort == null) {
+      break;
+    }
 
-typedef snd_rawmidi_info_get_name = Pointer<Utf8> Function(Pointer<Int32> info);
-typedef RawmidiInfoGetName = Pointer<Utf8> Function(Pointer<Int32> info);
+    if ((status = alsa.snd_rawmidi_read(inPort, buffer.cast(), 1)) < 0) {
+      print(
+          "Problem reading MIDI input:${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}");
+    } else {
+      // print("byte ${buffer.value}");
+      if (rxBuffer.length == 0) {
+        msgLength = lengthOfMessageType(buffer.value);
+      }
 
-typedef snd_rawmidi_open = Int32 Function(Pointer<Int32> inMidi,
-    Pointer<Int32> outMidi, Pointer<Utf8> name, Int8 mode);
-typedef RawMIDIOpen = int Function(Pointer<Int32> inMidi,
-    Pointer<Int32> outMidi, Pointer<Utf8> name, int mode);
+      rxBuffer.add(buffer.value);
+
+      if (rxBuffer.length == msgLength) {
+        // print("send buffer $rxBuffer $msgLength");
+        sendPort.send(Uint8List.fromList(rxBuffer));
+        rxBuffer.clear();
+      }
+    }
+  }
+}
+
+class LinuxMidiDevice extends MidiDevice {
+  Pointer<Pointer<a.snd_rawmidi_>> outPort;
+  Pointer<Pointer<a.snd_rawmidi_>> inPort;
+  StreamController<MidiPacket> _rxStreamCtrl;
+  Isolate _isolate;
+
+  LinuxMidiDevice(String id, String name, String type,
+      StreamController<MidiPacket> rxStreamCtrl)
+      : super(id, name, type, false) {
+    _rxStreamCtrl = rxStreamCtrl;
+  }
+
+  Future<bool> connect() async {
+    outPort = allocate();
+    inPort = allocate();
+
+    Pointer<Int8> name = Utf8.toUtf8("hw:$id,0,0").cast<Int8>();
+    print("open out port ${FlutterMidiCommandLinux.stringFromNative(name)}");
+    int status = 0;
+    if ((status =
+            alsa.snd_rawmidi_open(inPort, outPort, name, a.SND_RAWMIDI_SYNC)) <
+        0) {
+      print(
+          'error: cannot open card number $id ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+      return false;
+    }
+
+    connected = true;
+
+    final errorPort = new ReceivePort();
+    final receivePort = ReceivePort();
+    _isolate = await Isolate.spawn(
+            _rxIsolate, Tuple2(receivePort.sendPort, inPort.value.address),
+            onError: errorPort.sendPort)
+        .catchError((err, stackTrace) {
+      print("Could not launch RX isolate. $err\nStackTrace: $stackTrace");
+    });
+
+    errorPort.listen((message) {
+      print('isolate error message $message');
+    });
+
+    receivePort.listen((data) {
+      // print("rx data $data $_rxStreamCtrl ${_rxStreamCtrl.sink}");
+      var packet =
+          MidiPacket(data, DateTime.now().millisecondsSinceEpoch, this);
+      _rxStreamCtrl.add(packet);
+    });
+
+    return true;
+  }
+
+  disconnect() {
+    _isolate.kill(priority: Isolate.immediate);
+
+    int status = 0;
+    if ((status = alsa.snd_rawmidi_drain(outPort.value)) < 0) {
+      print(
+          'error: cannot drain out port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+    }
+    if ((status = alsa.snd_rawmidi_close(outPort.value)) < 0) {
+      print(
+          'error: cannot close out port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+    }
+    if ((status = alsa.snd_rawmidi_drain(inPort.value)) < 0) {
+      print(
+          'error: cannot drain in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+    }
+    if ((status = alsa.snd_rawmidi_close(inPort.value)) < 0) {
+      print(
+          'error: cannot close in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+    }
+  }
+}
 
 class FlutterMidiCommandLinux extends MidiCommandPlatform {
-  StreamController<Uint8List> _rxStreamController =
-      StreamController<Uint8List>.broadcast();
-  Stream<Uint8List> _rxStream = StreamController<Uint8List>.broadcast().stream;
+  StreamController<MidiPacket> _rxStreamController =
+      StreamController<MidiPacket>.broadcast();
+  Stream<MidiPacket> _rxStream;
   StreamController<String> _setupStreamController =
       StreamController<String>.broadcast();
   Stream<String> _setupStream;
 
-  Pointer<Utf8> port_name;
-  Pointer<Int32> in_port;
-  Pointer<Int32> out_port;
-
-  Function strError;
-  Function cardNext;
-  Function cardGetName;
-  Function cardGetLongName;
-  Function ctlOpen;
-  Function ctlRawmidiNextDevice;
-  Function ctlRawmidiInfo;
-  Function rawmidiInfoGetName;
+  Map<String, LinuxMidiDevice> _connectedDevices =
+      Map<String, LinuxMidiDevice>();
 
   /// A constructor that allows tests to override the window object used by the plugin.
-  FlutterMidiCommandLinux() {
-    in_port = allocate();
-    out_port = allocate();
-    port_name = Utf8.toUtf8("hw:1,0,0");
+  FlutterMidiCommandLinux();
 
-    // print('in $in_port out $out_port name $port_name');
-
-    final libalsa = DynamicLibrary.open("libasound.so.2");
-
-    strError = libalsa.lookupFunction<snd_strerror, StrError>('snd_strerror');
-    cardNext = libalsa.lookupFunction<snd_card_next, CardNext>('snd_card_next');
-    cardGetName = libalsa
-        .lookupFunction<snd_card_get_name, CardGetName>('snd_card_get_name');
-    cardGetLongName =
-        libalsa.lookupFunction<snd_card_get_long_name, CardGetLongName>(
-            'snd_card_next');
-    ctlOpen = libalsa.lookupFunction<snd_ctl_open, CtlOpen>('snd_ctl_open');
-    ctlRawmidiNextDevice = libalsa.lookupFunction<snd_ctl_rawmidi_next_device,
-        CtlRawmidiNextDevice>('snd_ctl_rawmidi_next_device');
-    ctlRawmidiInfo =
-        libalsa.lookupFunction<snd_ctl_rawmidi_info, CtlRawmidiInfo>(
-            'snd_ctl_rawmidi_info');
-    rawmidiInfoGetName =
-        libalsa.lookupFunction<snd_rawmidi_info_get_name, RawmidiInfoGetName>(
-            'snd_rawmidi_info_get_name');
-
-    // final rawMIDIOpen = libalsa
-    //     .lookupFunction<snd_rawmidi_open, RawMIDIOpen>('snd_rawmidi_open');
-    // int result =
-    //     rawMIDIOpen(in_port, out_port, port_name, SND_RAWMIDI_NONBLOCK);
-    // print('Result: $result ${statusMessage(result)}');
-  }
-
-  String statusMessage(int status) {
-    return Utf8.fromUtf8(strError(status));
+  static String stringFromNative(Pointer<Int8> pointer) {
+    return Utf8.fromUtf8(pointer.cast<Utf8>());
   }
 
   /// The linux implementation of [MidiCommandPlatform]
@@ -118,76 +189,70 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   @override
   Future<List<MidiDevice>> get devices async {
-    _printMidiPorts();
-    // _printCardList();
-    return List<MidiDevice>();
-    // JsObject i = new JsObject.fromBrowserObject(object)
-    // _access.inputs.forEach((key, value) {
-    //   print("input key ${key} ${value}");
-    //   // print( "Input port [type:'${element.type}'] id:'${element.id}' manufacturer:'${element.manufacturer}' name:'${element.name}' version:'${element.version}'");
-    //   // element.value.onMidiMessage.listen(_handleMidiIn);
-    //   // html.MidiPort inPort = element as html.MidiPort;
-    //   // value.on['midimessage'].listen(_handleMidiIn);
-    // });
-
-    // _access.outputs.forEach((key, value) {
-    //   print("output ${key} ${value}");FlutterMidiCommandLinux
-    // });
-
-    // var devs = await _methodChannel.invokeMethod('getDevices');
-    // return devs.map<MidiDevice>((m) {
-    //   var map = m.cast<String, Object>();
-    //   return MidiDevice(map["id"], map["name"], map["type"], map["connected"] == "true");
-    // }).toList();
+    // _printMidiPorts();
+    return Future.value(_printCardList());
   }
 
-  void _printCardList() {
+  List<MidiDevice> _printCardList() {
+    print("_printCardList");
     int status;
     var card = allocate<Int32>(count: 1);
     card.elementAt(0).value = -1;
-    Pointer<Utf8> longname = nullptr;
-    Pointer<Utf8> shortname = nullptr;
+    Pointer<Pointer<Int8>> longname = allocate();
+    Pointer<Pointer<Int8>> shortname = allocate();
 
-    if ((status = cardNext(card)) < 0) {
-      print('error: cannot determine card number $card ${strError(status)}');
-      return;
+    List<MidiDevice> cards = List<MidiDevice>();
+
+    if ((status = alsa.snd_card_next(card)) < 0) {
+      print(
+          'error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+      return null;
     }
-    print('status $status');
+    // print('status $status');
     if (card.value < 0) {
       print('error: no sound cards found');
-      return;
+      return null;
     }
 
     while (card.value >= 0) {
-      print("card ${card.value}");
-      if ((status = cardGetName(card, shortname)) < 0) {
+      // print("card ${card.value}");
+      if ((status = alsa.snd_card_get_name(card.value, shortname)) < 0) {
         print(
-            'error: cannot determine card shortname $card ${strError(status)}');
+            'error: cannot determine card shortname $card ${stringFromNative(alsa.snd_strerror(status))}');
         break;
       }
-      print('status $status');
-      // if ((status = cardGetLongName(card, longname)) < 0) {
+      // print('status $status');
+      // if ((status = alsa.snd_card_get_longname(card.value, longname)) < 0) {
       //   print(
-      //       'error: cannot determine card longname $card ${strError(status)}');
+      //       'error: cannot determine card longname $card ${stringFromNative(alsa.snd_strerror(status))}');
       //   break;
       // }
-      print('status $status');
-      print("card shortname ${Utf8.fromUtf8(shortname)}");
-      // print("card longname ${Utf8.fromUtf8(longname)}");
-      if ((status = cardNext(card)) < 0) {
-        print('error: cannot determine card number $card ${strError(status)}');
-        return;
+      // print('status $status');
+      print(
+          "card shortname ${stringFromNative(shortname.value)} card ${card.value}");
+
+      cards.add(LinuxMidiDevice(card.value.toString(),
+          stringFromNative(shortname.value), "native", _rxStreamController));
+
+      if ((status = alsa.snd_card_next(card)) < 0) {
+        print(
+            'error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+        return cards;
       }
     }
+
+    return cards;
   }
 
   void _printMidiPorts() {
+    print("_printMidiPorts");
     int status;
     var card = allocate<Int32>(count: 1);
     card.elementAt(0).value = -1;
 
-    if ((status = cardNext(card)) < 0) {
-      print('error: cannot determine card number $card ${strError(status)}');
+    if ((status = alsa.snd_card_next(card)) < 0) {
+      print(
+          'error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
     if (card.value < 0) {
@@ -197,11 +262,12 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
     print('device:');
     while (card.value >= 0) {
+      // print("card value ${card.value}");
       _listMidiDevicesOnCard(card.value);
 
-      if ((status = cardNext(card)) < 0) {
+      if ((status = alsa.snd_card_next(card)) < 0) {
         print(
-            'error: cannot determine next card number $card ${strError(status)}');
+            'error: cannot determine next card number $card ${stringFromNative(alsa.snd_strerror(status))}');
         break;
       }
     }
@@ -209,46 +275,55 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   }
 
   void _listMidiDevicesOnCard(int card) {
-    Pointer<Int32> ctl = allocate<Int32>(count: 1);
-    Pointer<Utf8> name = Utf8.toUtf8("hw:$card");
+    Pointer<Pointer<a.snd_ctl_>> ctl = allocate<Pointer<a.snd_ctl_>>(count: 1);
+    Pointer<Int8> name = Utf8.toUtf8("hw:$card").cast();
     Pointer<Int32> device = allocate<Int32>(count: 1);
     device.elementAt(0).value = -1;
-    int status;
+    int status = -1;
 
-    print('device on card ${Utf8.fromUtf8(name)}');
-    if ((status = ctlOpen(ctl, name, 0)) < 0) {
+    print(
+        'device on card [$card] ${stringFromNative(name)} ctl: $ctl device $device status $status');
+    status = alsa.snd_ctl_open(ctl, name, 0);
+    // print("status after ctl_open $status");
+    if (status < 0) {
       print(
-          'error: cannot open control for card number $card ${strError(status)}');
+          'error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
-
+    // print("do device.value ${device.value}");
     do {
-      print("ctl $ctl device $device");
-      status = ctlRawmidiNextDevice(ctl, device);
-      print("status $status");
+      // print("ctl $ctl device $device");
+      status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
+      print("status $status device.value ${device.value}");
       if (status < 0) {
         print(
-            'error: cannot determine device number ${device.value} ${strError(status)}');
+            'error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
         break;
       }
       if (device.value >= 0) {
-        _listSubdeviceInfo(ctl, card, device.value);
+        _listSubdeviceInfo(ctl.value, card, device.value);
       }
     } while (device.value > 0);
   }
 
-  void _listSubdeviceInfo(Pointer ctl, int card, int device) {
-    Pointer<Int32> info = allocate<Int32>(count: 1);
-    Pointer<Utf8> name = allocate();
+  void _listSubdeviceInfo(Pointer<a.snd_ctl_> ctl, int card, int device) {
+    Pointer<a.snd_rawmidi_info_> info = allocate<a.snd_rawmidi_info_>(count: 1);
+    Pointer<Int8> name = allocate();
 
-    int status = ctlRawmidiInfo(ctl, info);
+    print("_listSubdeviceInfo");
+
+    int status = alsa.snd_ctl_rawmidi_info(ctl, info);
+    print("status $status info ${info}");
     if (status < 0) {
-      print('error: cannot get device info ${strError(status)}');
+      print(
+          'error: cannot get device info ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
-    print('info ${info.value}');
-    name = rawmidiInfoGetName(info);
-    print('name ${Utf8.fromUtf8(name)}');
+    print('info ${info}');
+    name = alsa.snd_rawmidi_info_get_name(info);
+    print('name ${stringFromNative(name)}');
+    free(info);
+    free(name);
   }
 
   /// Starts scanning for BLE MIDI devices.
@@ -262,38 +337,70 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   /// Connects to the device.
   @override
   void connectToDevice(MidiDevice device) {
-    // _methodChannel.invokeMethod('connectToDevice', device.toDictionary);
+    print('connect to $device');
+
+    var linuxDevice = device as LinuxMidiDevice;
+    linuxDevice.connect().then((success) {
+      if (success) {
+        _connectedDevices[device.id] = device;
+      } else {
+        print("failed to connect $linuxDevice");
+      }
+    });
   }
 
   /// Disconnects from the device.
   @override
-  void disconnectDevice(MidiDevice device) {
-    // _methodChannel.invokeMethod('disconnectDevice', device.toDictionary);
+  void disconnectDevice(MidiDevice device, {bool remove = true}) {
+    if (_connectedDevices.containsKey(device.id)) {
+      var linuxDevice = device as LinuxMidiDevice;
+      linuxDevice.disconnect();
+      if (remove) _connectedDevices.remove(device.id);
+    }
   }
 
   @override
   void teardown() {
-    // _methodChannel.invokeMethod('teardown');
+    print("teardown");
+
+    _connectedDevices.values.forEach((device) {
+      disconnectDevice(device, remove: false);
+    });
+    _connectedDevices.clear();
   }
 
   /// Sends data to the currently connected device.wmidi hardware driver name
   ///
   /// Data is an UInt8List of individual MIDI command bytes.
   @override
-  void sendData(Uint8List data) {
-    print("send $data through method channel");
-    // _methodChannel.invokeMethod('sendData', data);
+  void sendData(Uint8List data, {int timestamp, String deviceId}) {
+    print("send $data through buffer");
+
+    final buffer = allocate<Uint8>(count: data.length);
+    for (var i = 0; i < data.length; i++) {
+      buffer[i] = data[i];
+    }
+    final voidBuffer = buffer.cast<Void>();
+
+    _connectedDevices.values.forEach((device) {
+      print("send to $device");
+      int status;
+      if ((status = alsa.snd_rawmidi_write(
+              device.outPort.value, voidBuffer, data.length)) <
+          0) {
+        print('failed to write ${stringFromNative(alsa.snd_strerror(status))}');
+      }
+    });
+
+    free(buffer);
   }
 
   /// Stream firing events whenever a midi package is received.
   ///
   /// The event contains the raw bytes contained in the MIDI package.
   @override
-  Stream<Uint8List> get onMidiDataReceived {
+  Stream<MidiPacket> get onMidiDataReceived {
     print("get on midi data");
-    // _rxStream ??= _rxChannel.receiveBroadcastStream().map<Uint8List>((d) {
-    //   return Uint8List.fromList(List<int>.from(d));
-    // });
     _rxStream ??= _rxStreamController.stream;
     return _rxStream;
   }
