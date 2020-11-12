@@ -231,6 +231,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       print(
           "card shortname ${stringFromNative(shortname.value)} card ${card.value}");
 
+      _listMidiDevicesOnCard(card.value);
+
       cards.add(LinuxMidiDevice(card.value.toString(),
           stringFromNative(shortname.value), "native", _rxStreamController));
 
@@ -347,6 +349,12 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
         print("failed to connect $linuxDevice");
       }
     });
+  }
+
+  /// Opens a port on a connected device.
+  @override
+  void openPortsOnDevice(MidiDevice device, List<MidiPort> ports) {
+    print('open ports');
   }
 
   /// Disconnects from the device.
