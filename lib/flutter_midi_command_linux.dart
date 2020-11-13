@@ -13,6 +13,9 @@ import 'alsa_generated_bindings.dart' as a;
 
 final alsa = a.ALSA(DynamicLibrary.open("libasound.so.2"));
 
+final int SND_RAWMIDI_STREAM_INPUT = 1;
+final int SND_RAWMIDI_STREAM_OUTPUT = 0;
+
 int lengthOfMessageType(int type) {
   int midiType = type & 0xF0;
 
@@ -51,8 +54,7 @@ int lengthOfMessageType(int type) {
 
 void _rxIsolate(Tuple2<SendPort, int> args) {
   final sendPort = args.item1;
-  final Pointer<a.snd_rawmidi_> inPort =
-      Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
+  final Pointer<a.snd_rawmidi_> inPort = Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
 
   print("start isolate $sendPort, $inPort, ${args.item2}");
 
@@ -63,6 +65,7 @@ void _rxIsolate(Tuple2<SendPort, int> args) {
 
   while (true) {
     if (inPort == null) {
+      print("no inport");
       break;
     }
 
@@ -228,10 +231,9 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       //   break;
       // }
       // print('status $status');
-      print(
-          "card shortname ${stringFromNative(shortname.value)} card ${card.value}");
+      print("card shortname ${stringFromNative(shortname.value)} card ${card.value}");
 
-      _listMidiDevicesOnCard(card.value);
+      // _listMidiDevicesOnCard(card.value);
 
       cards.add(LinuxMidiDevice(card.value.toString(),
           stringFromNative(shortname.value), "native", _rxStreamController));
@@ -286,20 +288,18 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     print(
         'device on card [$card] ${stringFromNative(name)} ctl: $ctl device $device status $status');
     status = alsa.snd_ctl_open(ctl, name, 0);
-    // print("status after ctl_open $status");
+    print("status after ctl_open $status ctl $ctl ctl.value ${ctl.value}");
     if (status < 0) {
-      print(
-          'error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+      print('error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
     // print("do device.value ${device.value}");
     do {
-      // print("ctl $ctl device $device");
+      print("ctl $ctl ${ctl.value} device $device");
       status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
       print("status $status device.value ${device.value}");
       if (status < 0) {
-        print(
-            'error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
+        print('error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
         break;
       }
       if (device.value >= 0) {
@@ -310,15 +310,29 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   void _listSubdeviceInfo(Pointer<a.snd_ctl_> ctl, int card, int device) {
     Pointer<a.snd_rawmidi_info_> info = allocate<a.snd_rawmidi_info_>(count: 1);
+
+    alsa.snd_rawmidi_info_set_device(info, device);
+
     Pointer<Int8> name = allocate();
 
-    print("_listSubdeviceInfo");
+    print("_listSubdeviceInfo ctl $ctl card $card device $device info $device");
+
+
+
+    alsa.snd_rawmidi_info_set_stream(info, SND_RAWMIDI_STREAM_INPUT);
+    alsa.snd_ctl_rawmidi_info(ctl, info);
+    int subs_in = alsa.snd_rawmidi_info_get_subdevices_count(info);
+    print("subs_in $subs_in");
+    alsa.snd_rawmidi_info_set_stream(info, SND_RAWMIDI_STREAM_OUTPUT);
+    alsa.snd_ctl_rawmidi_info(ctl, info);
+    int subs_out = alsa.snd_rawmidi_info_get_subdevices_count(info);
+    print("subs_out $subs_out");
+
 
     int status = alsa.snd_ctl_rawmidi_info(ctl, info);
     print("status $status info ${info}");
     if (status < 0) {
-      print(
-          'error: cannot get device info ${stringFromNative(alsa.snd_strerror(status))}');
+      print('error: cannot get device info ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
     print('info ${info}');
@@ -382,7 +396,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   /// Data is an UInt8List of individual MIDI command bytes.
   @override
   void sendData(Uint8List data, {int timestamp, String deviceId}) {
-    print("send $data through buffer");
+    // print("send $data through buffer");
 
     final buffer = allocate<Uint8>(count: data.length);
     for (var i = 0; i < data.length; i++) {
@@ -391,7 +405,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     final voidBuffer = buffer.cast<Void>();
 
     _connectedDevices.values.forEach((device) {
-      print("send to $device");
+      // print("send to $device");
       int status;
       if ((status = alsa.snd_rawmidi_write(
               device.outPort.value, voidBuffer, data.length)) <

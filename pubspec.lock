@@ -86,9 +86,11 @@ packages:
   flutter_midi_command_platform_interface:
     dependency: "direct main"
     description:
-      path: "../flutter_midi_command_platform_interface"
-      relative: true
-    source: path
+      path: "."
+      ref: ports
+      resolved-ref: dcc1f2f797278dd2854d2c33ac1d624f2939e070
+      url: "https://github.com/InvisibleWrench/flutter_midi_command_platform_interface.git"
+    source: git
     version: "0.2.1"
   flutter_test:
     dependency: "direct dev"
