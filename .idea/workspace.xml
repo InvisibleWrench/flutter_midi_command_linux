@@ -20,8 +20,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="492f6996-7ee1-477e-a890-bf5ea5216f90" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.flutter-plugins-dependencies" beforeDir="false" afterPath="$PROJECT_DIR$/.flutter-plugins-dependencies" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/flutter_midi_command_linux.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/flutter_midi_command_linux.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.flutter-plugins-dependencies" beforeDir="false" afterPath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.flutter-plugins-dependencies" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/flutter_midi_command_linux.iml" beforeDir="false" afterPath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/flutter_midi_command_linux.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/linux/flutter/ephemeral/.plugin_symlinks/flutter_midi_command_linux/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -58,6 +64,14 @@
       <option name="presentableId" value="Default" />
       <updated>1603140639303</updated>
     </task>
+    <task id="LOCAL-00001" summary="git">
+      <created>1605272677584</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1605272677584</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -84,6 +98,10 @@
     </option>
     <option name="oldMeFiltersMigrated" value="true" />
   </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="git" />
+    <option name="LAST_COMMIT_MESSAGE" value="git" />
+  </component>
   <component name="WindowStateProjectService">
     <state x="180" y="127" width="1113" height="1055" key="DiffContextDialog" timestamp="1605272149568">
       <screen x="72" y="27" width="1779" height="1255" />
@@ -93,9 +111,9 @@
       <screen x="72" y="27" width="1779" height="1255" />
     </state>
     <state x="592" y="417" width="728" height="482" key="MultipleFileMergeDialog/72.27.1779.1255@72.27.1779.1255" timestamp="1605272167547" />
-    <state x="556" y="390" width="800" height="535" key="Vcs.Push.Dialog.v2" timestamp="1605272210708">
+    <state x="556" y="390" width="800" height="535" key="Vcs.Push.Dialog.v2" timestamp="1605272691415">
       <screen x="72" y="27" width="1779" height="1255" />
     </state>
-    <state x="556" y="390" width="800" height="535" key="Vcs.Push.Dialog.v2/72.27.1779.1255@72.27.1779.1255" timestamp="1605272210708" />
+    <state x="556" y="390" width="800" height="535" key="Vcs.Push.Dialog.v2/72.27.1779.1255@72.27.1779.1255" timestamp="1605272691415" />
   </component>
 </project>

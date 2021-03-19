@@ -1,3 +1,9 @@
+## 0.0.2
+
+refs
+
+
 ## 0.0.1
 
-* TODO: Describe initial release.
+Initial Linux support
+

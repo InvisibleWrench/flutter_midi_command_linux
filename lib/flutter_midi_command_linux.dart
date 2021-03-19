@@ -1,12 +1,8 @@
 import 'dart:async';
-import 'dart:ffi';
-import 'dart:io';
 import 'package:ffi/ffi.dart';
+import 'dart:ffi';
 import 'dart:isolate';
-
-import 'package:flutter/services.dart';
 import 'dart:typed_data';
-import 'package:meta/meta.dart';
 import 'package:tuple/tuple.dart';
 import 'package:flutter_midi_command_platform_interface/flutter_midi_command_platform_interface.dart';
 import 'alsa_generated_bindings.dart' as a;
@@ -54,14 +50,15 @@ int lengthOfMessageType(int type) {
 
 void _rxIsolate(Tuple2<SendPort, int> args) {
   final sendPort = args.item1;
-  final Pointer<a.snd_rawmidi_> inPort = Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
+  final Pointer<a.snd_rawmidi_> inPort =
+      Pointer<a.snd_rawmidi_>.fromAddress(args.item2);
 
   print("start isolate $sendPort, $inPort, ${args.item2}");
 
   int status = 0;
   int msgLength = 0;
-  Pointer<Uint8> buffer = allocate(count: 1);
-  List<int> rxBuffer = List<int>();
+  Pointer<Uint8> buffer = calloc<Uint8>(); // allocate(count: 1);
+  List<int> rxBuffer = [];
 
   while (true) {
     if (inPort == null) {
@@ -102,10 +99,11 @@ class LinuxMidiDevice extends MidiDevice {
   }
 
   Future<bool> connect() async {
-    outPort = allocate();
-    inPort = allocate();
+    outPort = calloc<Pointer<a.snd_rawmidi_>>(); //allocate();
+    inPort = calloc<Pointer<a.snd_rawmidi_>>(); //allocate();
 
-    Pointer<Int8> name = Utf8.toUtf8("hw:$id,0,0").cast<Int8>();
+    //Pointer<Int8> name = Utf8.toUtf8("hw:$id,0,0").cast<Int8>();
+    Pointer<Int8> name = "hw:$id,0,0".toNativeUtf8().cast<Int8>();
     print("open out port ${FlutterMidiCommandLinux.stringFromNative(name)}");
     int status = 0;
     if ((status =
@@ -179,7 +177,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   FlutterMidiCommandLinux();
 
   static String stringFromNative(Pointer<Int8> pointer) {
-    return Utf8.fromUtf8(pointer.cast<Utf8>());
+    return pointer.cast<Utf8>().toDartString();
   }
 
   /// The linux implementation of [MidiCommandPlatform]
@@ -199,12 +197,12 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   List<MidiDevice> _printCardList() {
     print("_printCardList");
     int status;
-    var card = allocate<Int32>(count: 1);
+    var card = calloc<Int32>(); // allocate<Int32>(count: 1);
     card.elementAt(0).value = -1;
-    Pointer<Pointer<Int8>> longname = allocate();
-    Pointer<Pointer<Int8>> shortname = allocate();
+    Pointer<Pointer<Int8>> longname = calloc<Pointer<Int8>>(); //allocate();
+    Pointer<Pointer<Int8>> shortname = calloc<Pointer<Int8>>(); //allocate();
 
-    List<MidiDevice> cards = List<MidiDevice>();
+    List<MidiDevice> cards = [];
 
     if ((status = alsa.snd_card_next(card)) < 0) {
       print(
@@ -231,7 +229,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       //   break;
       // }
       // print('status $status');
-      print("card shortname ${stringFromNative(shortname.value)} card ${card.value}");
+      print(
+          "card shortname ${stringFromNative(shortname.value)} card ${card.value}");
 
       // _listMidiDevicesOnCard(card.value);
 
@@ -251,7 +250,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   void _printMidiPorts() {
     print("_printMidiPorts");
     int status;
-    var card = allocate<Int32>(count: 1);
+    var card = calloc<Int32>();
     card.elementAt(0).value = -1;
 
     if ((status = alsa.snd_card_next(card)) < 0) {
@@ -279,9 +278,9 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   }
 
   void _listMidiDevicesOnCard(int card) {
-    Pointer<Pointer<a.snd_ctl_>> ctl = allocate<Pointer<a.snd_ctl_>>(count: 1);
-    Pointer<Int8> name = Utf8.toUtf8("hw:$card").cast();
-    Pointer<Int32> device = allocate<Int32>(count: 1);
+    Pointer<Pointer<a.snd_ctl_>> ctl = calloc<Pointer<a.snd_ctl_>>();
+    Pointer<Int8> name = "hw:$card".toNativeUtf8().cast<Int8>();
+    Pointer<Int32> device = calloc<Int32>();
     device.elementAt(0).value = -1;
     int status = -1;
 
@@ -290,7 +289,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     status = alsa.snd_ctl_open(ctl, name, 0);
     print("status after ctl_open $status ctl $ctl ctl.value ${ctl.value}");
     if (status < 0) {
-      print('error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+      print(
+          'error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
     // print("do device.value ${device.value}");
@@ -299,7 +299,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
       print("status $status device.value ${device.value}");
       if (status < 0) {
-        print('error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
+        print(
+            'error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
         break;
       }
       if (device.value >= 0) {
@@ -309,15 +310,13 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   }
 
   void _listSubdeviceInfo(Pointer<a.snd_ctl_> ctl, int card, int device) {
-    Pointer<a.snd_rawmidi_info_> info = allocate<a.snd_rawmidi_info_>(count: 1);
+    Pointer<a.snd_rawmidi_info_> info = calloc<a.snd_rawmidi_info_>();
 
     alsa.snd_rawmidi_info_set_device(info, device);
 
-    Pointer<Int8> name = allocate();
+    Pointer<Int8> name = calloc<Int8>();
 
     print("_listSubdeviceInfo ctl $ctl card $card device $device info $device");
-
-
 
     alsa.snd_rawmidi_info_set_stream(info, SND_RAWMIDI_STREAM_INPUT);
     alsa.snd_ctl_rawmidi_info(ctl, info);
@@ -328,18 +327,18 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     int subs_out = alsa.snd_rawmidi_info_get_subdevices_count(info);
     print("subs_out $subs_out");
 
-
     int status = alsa.snd_ctl_rawmidi_info(ctl, info);
     print("status $status info ${info}");
     if (status < 0) {
-      print('error: cannot get device info ${stringFromNative(alsa.snd_strerror(status))}');
+      print(
+          'error: cannot get device info ${stringFromNative(alsa.snd_strerror(status))}');
       return;
     }
     print('info ${info}');
     name = alsa.snd_rawmidi_info_get_name(info);
     print('name ${stringFromNative(name)}');
-    free(info);
-    free(name);
+    calloc.free(info);
+    calloc.free(name);
   }
 
   /// Starts scanning for BLE MIDI devices.
@@ -398,7 +397,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   void sendData(Uint8List data, {int timestamp, String deviceId}) {
     // print("send $data through buffer");
 
-    final buffer = allocate<Uint8>(count: data.length);
+    final buffer = calloc<Uint8>();
     for (var i = 0; i < data.length; i++) {
       buffer[i] = data[i];
     }
@@ -414,7 +413,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       }
     });
 
-    free(buffer);
+    calloc.free(buffer);
   }
 
   /// Stream firing events whenever a midi package is received.
