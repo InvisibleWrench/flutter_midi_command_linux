@@ -90,17 +90,56 @@ class LinuxMidiDevice extends MidiDevice {
   StreamController<MidiPacket> _rxStreamCtrl;
   Isolate? _isolate;
 
-  LinuxMidiDevice(String id, String name, String type, this._rxStreamCtrl) : super(id, name, type, false);
+  Pointer<a.snd_ctl_> ctl;
+  int cardId;
+  int deviceId;
+
+  LinuxMidiDevice(this.ctl, this.cardId, this.deviceId, String name, String type, this._rxStreamCtrl) : super("hw:$cardId,$deviceId", name, type, false) {
+    // Fetch device info
+    Pointer<Pointer<a.snd_rawmidi_info_>> info = calloc<Pointer<a.snd_rawmidi_info_>>();
+    alsa.snd_rawmidi_info_malloc(info);
+    alsa.snd_rawmidi_info_set_device(info.value, deviceId);
+
+    int status = alsa.snd_ctl_rawmidi_info(ctl, info.value);
+    if (status < 0) {
+      print('error: cannot get device info.value ${alsa.snd_strerror(status).cast<Utf8>().toDartString()}');
+      return;
+    }
+
+    // Get input ports
+    alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_INPUT);
+    status = alsa.snd_ctl_rawmidi_info(ctl, info.value);
+    int inCount = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
+    for (var i = 0; i < inCount; i++) {
+      if (alsa.snd_rawmidi_info_get_subdevice(info.value) > -1) {
+        // print("sub in [$i] $status ${alsa.snd_rawmidi_info_get_subdevice_name(info.value).cast<Utf8>().toDartString()}");
+        inputPorts.add(MidiPort(i, MidiPortType.IN));
+      }
+    }
+
+    // Get output ports
+    alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_OUTPUT);
+    status = alsa.snd_ctl_rawmidi_info(ctl, info.value);
+    int outCount = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
+    for (var i = 0; i < outCount; i++) {
+      if (alsa.snd_rawmidi_info_get_subdevice(info.value) > -1) {
+        // print("sub in [$i] $status ${alsa.snd_rawmidi_info_get_subdevice_name(info.value).cast<Utf8>().toDartString()}");
+        outputPorts.add(MidiPort(i, MidiPortType.OUT));
+      }
+    }
+
+    calloc.free(info);
+  }
 
   Future<bool> connect() async {
     outPort = calloc<Pointer<a.snd_rawmidi_>>();
     inPort = calloc<Pointer<a.snd_rawmidi_>>();
 
-    Pointer<Int8> name = "hw:$id,0,0".toNativeUtf8().cast<Int8>();
+    Pointer<Int8> name = "hw:$cardId,$deviceId,0".toNativeUtf8().cast<Int8>();
     print("open out port ${FlutterMidiCommandLinux.stringFromNative(name)}");
     int status = 0;
     if ((status = alsa.snd_rawmidi_open(inPort!, outPort!, name, a.SND_RAWMIDI_SYNC)) < 0) {
-      print('error: cannot open card number $id ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
+      print('error: cannot open card number $cardId ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
       return false;
     }
 
@@ -125,6 +164,19 @@ class LinuxMidiDevice extends MidiDevice {
     return true;
   }
 
+  send(Pointer<Uint8> buffer, int length) {
+    if (outPort != null) {
+      final voidBuffer = buffer.cast<Void>();
+
+      int status;
+      if ((status = alsa.snd_rawmidi_write(outPort!.value, voidBuffer, length)) < 0) {
+        print('failed to write ${alsa.snd_strerror(status).cast<Utf8>().toDartString()}');
+      }
+    } else {
+      print('outport is null');
+    }
+  }
+
   disconnect() {
     _isolate?.kill(priority: Isolate.immediate);
 
@@ -145,20 +197,22 @@ class LinuxMidiDevice extends MidiDevice {
         print('error: cannot close in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
       }
     }
+
+    connected = false;
   }
 }
 
 class FlutterMidiCommandLinux extends MidiCommandPlatform {
   StreamController<MidiPacket> _rxStreamController = StreamController<MidiPacket>.broadcast();
-  late Stream<MidiPacket>? _rxStream;
-  StreamController<String>? _setupStreamController = StreamController<String>.broadcast();
+  late Stream<MidiPacket> _rxStream;
+  StreamController<String> _setupStreamController = StreamController<String>.broadcast();
   late Stream<String> _setupStream;
 
   Map<String, LinuxMidiDevice> _connectedDevices = Map<String, LinuxMidiDevice>();
 
   /// A constructor that allows tests to override the window object used by the plugin.
   FlutterMidiCommandLinux() {
-    _setupStream = _setupStreamController!.stream;
+    _setupStream = _setupStreamController.stream;
     _rxStream = _rxStreamController.stream;
   }
 
@@ -204,7 +258,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       // print("card ${card.value}");
       if ((status = alsa.snd_card_get_name(card.value, shortname)) < 0) {
         print('error: cannot determine card shortname $card ${stringFromNative(alsa.snd_strerror(status))}');
-        break;
+        continue;
       }
       // print('status $status');
       // if ((status = alsa.snd_card_get_longname(card.value, longname)) < 0) {
@@ -215,107 +269,142 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       // print('status $status');
       print("card shortname ${stringFromNative(shortname.value)} card ${card.value}");
 
-      // _listMidiDevicesOnCard(card.value);
+      // bool isMidiCapable = _listMidiDevicesOnCard(card.value);
 
-      cards.add(LinuxMidiDevice(card.value.toString(), stringFromNative(shortname.value), "native", _rxStreamController));
+      // if (isMidiCapable) {
+      //   cards.add(LinuxMidiDevice(card.value.toString(), stringFromNative(shortname.value), "native", _rxStreamController));
+      // }
+
+      Pointer<Pointer<a.snd_ctl_>> ctl = calloc<Pointer<a.snd_ctl_>>();
+      Pointer<Int8> name = "hw:${card.value}".toNativeUtf8().cast<Int8>();
+      Pointer<Int32> device = calloc<Int32>();
+      device.elementAt(0).value = -1;
+      status = -1;
+
+      print('device on card [$card] ${stringFromNative(name)} ctl: $ctl device $device status $status');
+      status = alsa.snd_ctl_open(ctl, name, 0);
+      print("status after ctl_open $status ctl $ctl ctl.value ${ctl.value}");
+      if (status < 0) {
+        print('error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+        continue;
+      }
+      // print("do device.value ${device.value}");
+      do {
+        print("ctl $ctl ${ctl.value} device $device");
+        status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
+        print("status $status device.value ${device.value}");
+        if (status < 0) {
+          print('error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
+          break;
+        }
+        if (device.value >= 0) {
+          // _listSubdeviceInfo(ctl.value, device.value);
+          cards.add(LinuxMidiDevice(ctl.value, card.value, device.value, stringFromNative(shortname.value), "native", _rxStreamController));
+        }
+      } while (device.value > 0);
 
       if ((status = alsa.snd_card_next(card)) < 0) {
         print('error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
         return cards;
+        // continue;
       }
     }
 
     return cards;
   }
 
-  void _printMidiPorts() {
-    print("_printMidiPorts");
-    int status;
-    var card = calloc<Int32>();
-    card.elementAt(0).value = -1;
+  // void _printMidiPorts() {
+  //   print("_printMidiPorts");
+  //   int status;
+  //   var card = calloc<Int32>();
+  //   card.elementAt(0).value = -1;
 
-    if ((status = alsa.snd_card_next(card)) < 0) {
-      print('error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
-      return;
-    }
-    if (card.value < 0) {
-      print('error: no sound cards found');
-      return;
-    }
+  //   if ((status = alsa.snd_card_next(card)) < 0) {
+  //     print('error: cannot determine card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+  //     return;
+  //   }
+  //   if (card.value < 0) {
+  //     print('error: no sound cards found');
+  //     return;
+  //   }
 
-    print('device:');
-    while (card.value >= 0) {
-      // print("card value ${card.value}");
-      _listMidiDevicesOnCard(card.value);
+  //   print('device:');
+  //   while (card.value >= 0) {
+  //     // print("card value ${card.value}");
+  //     _listMidiDevicesOnCard(card.value);
 
-      if ((status = alsa.snd_card_next(card)) < 0) {
-        print('error: cannot determine next card number $card ${stringFromNative(alsa.snd_strerror(status))}');
-        break;
-      }
-    }
-    print('end');
-  }
+  //     if ((status = alsa.snd_card_next(card)) < 0) {
+  //       print('error: cannot determine next card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+  //       break;
+  //     }
+  //   }
+  //   print('end');
+  // }
 
-  void _listMidiDevicesOnCard(int card) {
-    Pointer<Pointer<a.snd_ctl_>> ctl = calloc<Pointer<a.snd_ctl_>>();
-    Pointer<Int8> name = "hw:$card".toNativeUtf8().cast<Int8>();
-    Pointer<Int32> device = calloc<Int32>();
-    device.elementAt(0).value = -1;
-    int status = -1;
+  // bool _listMidiDevicesOnCard(int card) {
+  //   Pointer<Pointer<a.snd_ctl_>> ctl = calloc<Pointer<a.snd_ctl_>>();
+  //   Pointer<Int8> name = "hw:$card".toNativeUtf8().cast<Int8>();
+  //   Pointer<Int32> device = calloc<Int32>();
+  //   device.elementAt(0).value = -1;
+  //   int status = -1;
 
-    print('device on card [$card] ${stringFromNative(name)} ctl: $ctl device $device status $status');
-    status = alsa.snd_ctl_open(ctl, name, 0);
-    print("status after ctl_open $status ctl $ctl ctl.value ${ctl.value}");
-    if (status < 0) {
-      print('error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
-      return;
-    }
-    // print("do device.value ${device.value}");
-    do {
-      print("ctl $ctl ${ctl.value} device $device");
-      status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
-      print("status $status device.value ${device.value}");
-      if (status < 0) {
-        print('error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
-        break;
-      }
-      if (device.value >= 0) {
-        _listSubdeviceInfo(ctl.value, card, device.value);
-      }
-    } while (device.value > 0);
-  }
+  //   print('device on card [$card] ${stringFromNative(name)} ctl: $ctl device $device status $status');
+  //   status = alsa.snd_ctl_open(ctl, name, 0);
+  //   print("status after ctl_open $status ctl $ctl ctl.value ${ctl.value}");
+  //   if (status < 0) {
+  //     print('error: cannot open control for card number $card ${stringFromNative(alsa.snd_strerror(status))}');
+  //     return false;
+  //   }
+  //   // print("do device.value ${device.value}");
+  //   do {
+  //     print("ctl $ctl ${ctl.value} device $device");
+  //     status = alsa.snd_ctl_rawmidi_next_device(ctl.value, device);
+  //     print("status $status device.value ${device.value}");
+  //     if (status < 0) {
+  //       print('error: cannot determine device number ${device.value} ${stringFromNative(alsa.snd_strerror(status))}');
+  //       break;
+  //     }
+  //     if (device.value >= 0) {
+  //       _listSubdeviceInfo(ctl.value, device.value);
+  //       return true;
+  //     }
+  //   } while (device.value > 0);
+  //   return false;
+  // }
 
-  void _listSubdeviceInfo(Pointer<a.snd_ctl_> ctl, int card, int device) {
-    Pointer<Pointer<a.snd_rawmidi_info_>> info = calloc<Pointer<a.snd_rawmidi_info_>>();
-    alsa.snd_rawmidi_info_malloc(info);
+  // void _listSubdeviceInfo(Pointer<a.snd_ctl_> ctl, int device) {
+  //   Pointer<Pointer<a.snd_rawmidi_info_>> info = calloc<Pointer<a.snd_rawmidi_info_>>();
+  //   alsa.snd_rawmidi_info_malloc(info);
 
-    alsa.snd_rawmidi_info_set_device(info.value, device);
+  //   alsa.snd_rawmidi_info_set_device(info.value, device);
 
-    Pointer<Int8> name = calloc<Int8>();
+  //   Pointer<Int8> name = calloc<Int8>();
 
-    print("_listSubdeviceInfo ctl $ctl card $card device $device info $device");
+  //   print("_listSubdeviceInfo ctl $ctl device $device info $device");
 
-    alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_INPUT);
-    alsa.snd_ctl_rawmidi_info(ctl, info.value);
-    int subs_in = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
-    print("subs_in $subs_in");
-    alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_OUTPUT);
-    alsa.snd_ctl_rawmidi_info(ctl, info.value);
-    int subs_out = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
-    print("subs_out $subs_out");
+  //   alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_INPUT);
+  //   alsa.snd_ctl_rawmidi_info(ctl, info.value);
+  //   int subs_in = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
+  //   print("subs_in $subs_in");
+  //   alsa.snd_rawmidi_info_set_stream(info.value, SND_RAWMIDI_STREAM_OUTPUT);
+  //   alsa.snd_ctl_rawmidi_info(ctl, info.value);
+  //   int subs_out = alsa.snd_rawmidi_info_get_subdevices_count(info.value);
+  //   print("subs_out $subs_out");
 
-    int status = alsa.snd_ctl_rawmidi_info(ctl, info.value);
-    print("status $status info.value ${info.value}");
-    if (status < 0) {
-      print('error: cannot get device info.value ${stringFromNative(alsa.snd_strerror(status))}');
-      return;
-    }
-    print('info.value ${info.value}');
-    name = alsa.snd_rawmidi_info_get_name(info.value);
-    print('name ${stringFromNative(name)}');
-    calloc.free(info);
-    calloc.free(name);
-  }
+  //   int status = alsa.snd_ctl_rawmidi_info(ctl, info.value);
+  //   print("status $status info.value ${info.value}");
+  //   if (status < 0) {
+  //     print('error: cannot get device info.value ${stringFromNative(alsa.snd_strerror(status))}');
+  //     return;
+  //   }
+  //   print('info.value ${info.value}');
+  //   name = alsa.snd_rawmidi_info_get_name(info.value);
+  //   print('name ${stringFromNative(name)}');
+  //   name = alsa.snd_rawmidi_info_get_subdevice_name(info.value);
+  //   print('subdevice name ${stringFromNative(name)}');
+  //   calloc.free(info);
+  //   // calloc.free(name);
+  // }
 
   /// Starts scanning for BLE MIDI devices.
   ///
@@ -334,7 +423,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     linuxDevice.connect().then((success) {
       if (success) {
         _connectedDevices[device.id] = device;
-        _setupStreamController?.add("deviceConnected");
+        _setupStreamController.add("deviceConnected");
       } else {
         print("failed to connect $linuxDevice");
       }
@@ -378,18 +467,19 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     for (var i = 0; i < data.length; i++) {
       buffer[i] = data[i];
     }
-    final voidBuffer = buffer.cast<Void>();
+    // final voidBuffer = buffer.cast<Void>();
 
     _connectedDevices.values.forEach((device) {
       // print("send to $device");
-      if (device.outPort != null) {
-        int status;
-        if ((status = alsa.snd_rawmidi_write(device.outPort!.value, voidBuffer, data.length)) < 0) {
-          print('failed to write ${stringFromNative(alsa.snd_strerror(status))}');
-        }
-      } else {
-        print('outport is null');
-      }
+      device.send(buffer, data.length);
+      // if (device.outPort != null) {
+      //   int status;
+      //   if ((status = alsa.snd_rawmidi_write(device.outPort!.value, voidBuffer, data.length)) < 0) {
+      //     print('failed to write ${stringFromNative(alsa.snd_strerror(status))}');
+      //   }
+      // } else {
+      //   print('outport is null');
+      // }
     });
 
     calloc.free(buffer);
@@ -400,8 +490,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   /// The event contains the raw bytes contained in the MIDI package.
   @override
   Stream<MidiPacket>? get onMidiDataReceived {
-    print("get on midi data");
-    // _rxStream ??= _rxStreamController.stream;
     return _rxStream;
   }
 
@@ -410,7 +498,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   /// For example, when a new BLE devices is discovered.
   @override
   Stream<String>? get onMidiSetupChanged {
-    // _setupStream ??= _setupStreamController.stream;
     return _setupStream;
   }
 }
