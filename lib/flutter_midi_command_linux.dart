@@ -316,7 +316,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   /// Connects to the device.
   @override
-  void connectToDevice(MidiDevice device) {
+  void connectToDevice(MidiDevice device, {List<MidiPort>? ports}) {
     print('connect to $device');
 
     var linuxDevice = device as LinuxMidiDevice;
