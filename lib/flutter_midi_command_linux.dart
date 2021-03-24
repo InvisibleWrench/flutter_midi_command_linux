@@ -90,6 +90,9 @@ class LinuxMidiDevice extends MidiDevice {
   StreamController<MidiPacket> _rxStreamCtrl;
   Isolate? _isolate;
 
+  ReceivePort? errorPort;
+  ReceivePort? receivePort;
+
   Pointer<a.snd_ctl_> ctl;
   int cardId;
   int deviceId;
@@ -147,17 +150,17 @@ class LinuxMidiDevice extends MidiDevice {
 
     connected = true;
 
-    final errorPort = new ReceivePort();
-    final receivePort = ReceivePort();
-    _isolate = await Isolate.spawn(_rxIsolate, Tuple2(receivePort.sendPort, inPort!.value.address), onError: errorPort.sendPort).catchError((err, stackTrace) {
+    errorPort = new ReceivePort();
+    receivePort = ReceivePort();
+    _isolate = await Isolate.spawn(_rxIsolate, Tuple2(receivePort!.sendPort, inPort!.value.address), onError: errorPort!.sendPort).catchError((err, stackTrace) {
       print("Could not launch RX isolate. $err\nStackTrace: $stackTrace");
     });
 
-    errorPort.listen((message) {
+    errorPort?.listen((message) {
       print('isolate error message $message');
     });
 
-    receivePort.listen((data) {
+    receivePort?.listen((data) {
       // print("rx data $data $_rxStreamCtrl ${_rxStreamCtrl.sink}");
       var packet = MidiPacket(data, DateTime.now().millisecondsSinceEpoch, this);
       _rxStreamCtrl.add(packet);
@@ -180,7 +183,11 @@ class LinuxMidiDevice extends MidiDevice {
   }
 
   disconnect() {
+    receivePort?.close();
+    errorPort?.close();
     _isolate?.kill(priority: Isolate.immediate);
+    _isolate = null;
+
     int status = 0;
     if (outPort != null) {
       if ((status = alsa.snd_rawmidi_drain(outPort!.value)) < 0) {
@@ -190,6 +197,7 @@ class LinuxMidiDevice extends MidiDevice {
         print('error: cannot close out port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
       }
     }
+
     if (inPort != null) {
       if ((status = alsa.snd_rawmidi_drain(inPort!.value)) < 0) {
         print('error: cannot drain in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
