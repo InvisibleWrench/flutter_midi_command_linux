@@ -2,7 +2,6 @@ name: flutter_midi_command_linux
 description: FlutterMidiCommand for Linux.
 version: 0.1.2
 homepage: https://github.com/InvisibleWrench/FlutterMidiCommand
-publish_to: none
 
 environment:
   sdk: ">=2.12.0 <3.0.0"
