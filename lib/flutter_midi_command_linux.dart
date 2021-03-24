@@ -180,10 +180,7 @@ class LinuxMidiDevice extends MidiDevice {
   }
 
   disconnect() {
-    print("disconnect device");
     _isolate?.kill(priority: Isolate.immediate);
-
-    print("isolate down");
     int status = 0;
     if (outPort != null) {
       if ((status = alsa.snd_rawmidi_drain(outPort!.value)) < 0) {
@@ -201,7 +198,6 @@ class LinuxMidiDevice extends MidiDevice {
         print('error: cannot close in port $this ${FlutterMidiCommandLinux.stringFromNative(alsa.snd_strerror(status))}');
       }
     }
-
     connected = false;
   }
 }
@@ -332,30 +328,26 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     });
   }
 
-  /// Opens a port on a connected device.
-  @override
-  void openPortsOnDevice(MidiDevice device, List<MidiPort> ports) {
-    print('open ports');
-  }
-
   /// Disconnects from the device.
   @override
   void disconnectDevice(MidiDevice device, {bool remove = true}) {
     if (_connectedDevices.containsKey(device.id)) {
       var linuxDevice = device as LinuxMidiDevice;
       linuxDevice.disconnect();
-      if (remove) _connectedDevices.remove(device.id);
+      if (remove) {
+        _connectedDevices.remove(device.id);
+        _setupStreamController.add("deviceDisconnected");
+      }
     }
   }
 
   @override
   void teardown() {
-    print("teardown");
-
     _connectedDevices.values.forEach((device) {
       disconnectDevice(device, remove: false);
     });
     _connectedDevices.clear();
+    _setupStreamController.add("deviceDisconnected");
   }
 
   /// Sends data to the currently connected device.wmidi hardware driver name
@@ -369,19 +361,9 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     for (var i = 0; i < data.length; i++) {
       buffer[i] = data[i];
     }
-    // final voidBuffer = buffer.cast<Void>();
-
     _connectedDevices.values.forEach((device) {
       // print("send to $device");
       device.send(buffer, data.length);
-      // if (device.outPort != null) {
-      //   int status;
-      //   if ((status = alsa.snd_rawmidi_write(device.outPort!.value, voidBuffer, data.length)) < 0) {
-      //     print('failed to write ${stringFromNative(alsa.snd_strerror(status))}');
-      //   }
-      // } else {
-      //   print('outport is null');
-      // }
     });
 
     calloc.free(buffer);
