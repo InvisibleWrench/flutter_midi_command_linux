@@ -180,8 +180,10 @@ class LinuxMidiDevice extends MidiDevice {
   }
 
   disconnect() {
+    print("disconnect device");
     _isolate?.kill(priority: Isolate.immediate);
 
+    print("isolate down");
     int status = 0;
     if (outPort != null) {
       if ((status = alsa.snd_rawmidi_drain(outPort!.value)) < 0) {
