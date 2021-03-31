@@ -1,3 +1,6 @@
+## 0.1.3
+Fixed buffer allocation
+
 ## 0.1.2
 Isolate port close
 

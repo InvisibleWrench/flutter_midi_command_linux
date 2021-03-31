@@ -365,7 +365,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   void sendData(Uint8List data, {int? timestamp, String? deviceId}) {
     // print("send $data through buffer");
 
-    final buffer = calloc<Uint8>(data.length);
+    final buffer = calloc<Uint8>(data.lengthInBytes);
     for (var i = 0; i < data.length; i++) {
       buffer[i] = data[i];
     }
