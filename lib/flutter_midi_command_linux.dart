@@ -152,7 +152,8 @@ class LinuxMidiDevice extends MidiDevice {
 
     errorPort = new ReceivePort();
     receivePort = ReceivePort();
-    _isolate = await Isolate.spawn(_rxIsolate, Tuple2(receivePort!.sendPort, inPort!.value.address), onError: errorPort!.sendPort).catchError((err, stackTrace) {
+    _isolate =
+        await Isolate.spawn(_rxIsolate, Tuple2(receivePort!.sendPort, inPort!.value.address), onError: errorPort!.sendPort).catchError((err, stackTrace) {
       print("Could not launch RX isolate. $err\nStackTrace: $stackTrace");
     });
 
@@ -391,5 +392,20 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   @override
   Stream<String>? get onMidiSetupChanged {
     return _setupStream;
+  }
+
+  /// Creates a virtual MIDI source
+  ///
+  /// The virtual MIDI source appears as a virtual port in other apps.
+  /// Currently only supported on iOS.
+  @override
+  void addVirtualDevice({String? name}) {
+    // Not implemented
+  }
+
+  /// Removes a previously addd virtual MIDI source.
+  @override
+  void removeVirtualDevice({String? name}) {
+    // Not implemented
   }
 }
