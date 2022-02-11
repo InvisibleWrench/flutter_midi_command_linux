@@ -10,8 +10,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_midi_command_platform_interface: ^0.3.2
-  midi: ^0.0.1
+  flutter_midi_command_platform_interface: ^0.4.0
+  midi: ^0.0.3
 
 dev_dependencies:
   flutter_test:
