@@ -1,3 +1,6 @@
+## 0.1.4
+Updated to latest platform interface
+
 ## 0.1.3
 Fixed buffer allocation
 

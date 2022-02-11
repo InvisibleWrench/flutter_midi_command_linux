@@ -9,8 +9,8 @@ class LinuxMidiDevice extends MidiDevice {
   int deviceId;
   AlsaMidiDevice _device;
 
-  LinuxMidiDevice(this._device, this.cardId, this.deviceId, String name,
-      String type, this._rxStreamCtrl)
+  LinuxMidiDevice(
+      this._device, this.cardId, this.deviceId, String name, String type, this._rxStreamCtrl)
       : super("hw:$cardId,$deviceId", name, type, false) {
     // Get input, output ports
     var i = 0;
@@ -45,22 +45,18 @@ class LinuxMidiDevice extends MidiDevice {
 }
 
 class FlutterMidiCommandLinux extends MidiCommandPlatform {
-  StreamController<MidiPacket> _rxStreamController =
-      StreamController<MidiPacket>.broadcast();
+  StreamController<MidiPacket> _rxStreamController = StreamController<MidiPacket>.broadcast();
   late Stream<MidiPacket> _rxStream;
-  StreamController<String> _setupStreamController =
-      StreamController<String>.broadcast();
+  StreamController<String> _setupStreamController = StreamController<String>.broadcast();
   late Stream<String> _setupStream;
 
-  Map<String, LinuxMidiDevice> _connectedDevices =
-      Map<String, LinuxMidiDevice>();
+  Map<String, LinuxMidiDevice> _connectedDevices = Map<String, LinuxMidiDevice>();
 
   /// A constructor that allows tests to override the window object used by the plugin.
   FlutterMidiCommandLinux() {
     _setupStream = _setupStreamController.stream;
     _rxStream = _rxStreamController.stream;
   }
-
 
   /// The linux implementation of [MidiCommandPlatform]
   ///
@@ -142,7 +138,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
       // print("send to $device");
       device.send(data, data.length);
     });
-
   }
 
   /// Stream firing events whenever a midi package is received.
@@ -159,5 +154,20 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
   @override
   Stream<String>? get onMidiSetupChanged {
     return _setupStream;
+  }
+
+  /// Creates a virtual MIDI source
+  ///
+  /// The virtual MIDI source appears as a virtual port in other apps.
+  /// Currently only supported on iOS.
+  @override
+  void addVirtualDevice({String? name}) {
+    // Not implemented
+  }
+
+  /// Removes a previously addd virtual MIDI source.
+  @override
+  void removeVirtualDevice({String? name}) {
+    // Not implemented
   }
 }
