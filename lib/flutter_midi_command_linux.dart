@@ -9,9 +9,14 @@ class LinuxMidiDevice extends MidiDevice {
   int deviceId;
   AlsaMidiDevice _device;
 
-  LinuxMidiDevice(
-      this._device, this.cardId, this.deviceId, String name, String type, this._rxStreamCtrl)
-      : super("hw:$cardId,$deviceId", name, type, false) {
+  LinuxMidiDevice(this._device, this.cardId, this.deviceId, String name, String type,
+      this._rxStreamCtrl, bool connected)
+      : super(
+          AlsaMidiDevice.hardwareId(cardId, deviceId),
+          name,
+          type,
+          connected,
+        ) {
     // Get input, output ports
     var i = 0;
     _device.inputPorts.toList().forEach((element) {
@@ -52,6 +57,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   Map<String, LinuxMidiDevice> _connectedDevices = Map<String, LinuxMidiDevice>();
 
+  final List<AlsaMidiDevice> _allAlsaDevices = [];
+
   /// A constructor that allows tests to override the window object used by the plugin.
   FlutterMidiCommandLinux() {
     _setupStream = _setupStreamController.stream;
@@ -68,7 +75,10 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   @override
   Future<List<MidiDevice>> get devices async {
-    return AlsaMidiDevice.getDevices()
+    if (_allAlsaDevices.isEmpty) {
+      _allAlsaDevices.addAll(AlsaMidiDevice.getDevices());
+    }
+    return _allAlsaDevices
         .map(
           (alsMidiDevice) => LinuxMidiDevice(
             alsMidiDevice,
@@ -77,6 +87,8 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
             alsMidiDevice.name,
             "native",
             _rxStreamController,
+            _connectedDevices.containsKey(
+                AlsaMidiDevice.hardwareId(alsMidiDevice.cardId, alsMidiDevice.deviceId)),
           ),
         )
         .toList();
@@ -92,18 +104,17 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
 
   /// Connects to the device.
   @override
-  void connectToDevice(MidiDevice device, {List<MidiPort>? ports}) {
+  Future<void> connectToDevice(MidiDevice device, {List<MidiPort>? ports}) async {
     print('connect to $device');
 
     var linuxDevice = device as LinuxMidiDevice;
-    linuxDevice.connect().then((success) {
-      if (success) {
-        _connectedDevices[device.id] = device;
-        _setupStreamController.add("deviceConnected");
-      } else {
-        print("failed to connect $linuxDevice");
-      }
-    });
+    final success = await linuxDevice.connect();
+    if (success) {
+      _connectedDevices[device.id] = device;
+      _setupStreamController.add("deviceConnected");
+    } else {
+      print("failed to connect $linuxDevice");
+    }
   }
 
   /// Disconnects from the device.
@@ -116,7 +127,6 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
         _connectedDevices.remove(device.id);
         _setupStreamController.add("deviceDisconnected");
       }
-      _rxStreamController.close();
     }
   }
 
@@ -127,6 +137,7 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
     });
     _connectedDevices.clear();
     _setupStreamController.add("deviceDisconnected");
+    _rxStreamController.close();
   }
 
   /// Sends data to the currently connected device.wmidi hardware driver name
