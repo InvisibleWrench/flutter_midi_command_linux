@@ -1,3 +1,6 @@
+## 0.3.0
+- Updated to Flutter 3.10, Dart 3
+
 ## 0.1.4
 Updated to latest platform interface
 
