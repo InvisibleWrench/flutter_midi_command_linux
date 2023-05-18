@@ -3,12 +3,7 @@
 
 .packages
 .pub/
-pubspec.lock
 
 build/
-<<<<<<< HEAD
 .flutter-plugins
 .flutter-plugins-dependencies
-=======
-pubspec.lock
->>>>>>> 90bb14baaf615ad409a7db59cac682dcf5872b66
