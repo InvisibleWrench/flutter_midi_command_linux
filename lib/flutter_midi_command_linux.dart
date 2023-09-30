@@ -94,10 +94,18 @@ class FlutterMidiCommandLinux extends MidiCommandPlatform {
         .toList();
   }
 
+
+  /// Prepares Bluetooth system
+  @override Future<void> startBluetoothCentral() async {
+    return Future.error("Not available on linux");
+  }
+
   /// Starts scanning for BLE MIDI devices.
   ///
   /// Found devices will be included in the list returned by [devices].
-  Future<void> startScanningForBluetoothDevices() async {}
+  Future<void> startScanningForBluetoothDevices() async {
+    return Future.error("Not available on linux");
+  }
 
   /// Stops scanning for BLE MIDI devices.
   void stopScanningForBluetoothDevices() {}
