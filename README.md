@@ -1,8 +1,3 @@
 # flutter_midi_command_linux
 
-A new Flutter plugin.
-
-## Getting Started
-
-
-
+This is the Linux specific implementation of [FlutterMidiCommand](https://pub.dev/packages/flutter_midi_command)
