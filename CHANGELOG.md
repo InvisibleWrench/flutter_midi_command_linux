@@ -1,3 +1,6 @@
+## 0.3.1
+- Added error messages for missing functionality
+
 ## 0.3.0
 - Updated to Flutter 3.10, Dart 3
 
